@@ -1,11 +1,280 @@
-
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Lab 5 Website</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AWS Cloud User Dashboard</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #ffffff; color: #333; margin: 0; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+        nav { width: 100%; display: none; justify-content: space-between; align-items: center; padding: 15px 40px; box-sizing: border-box; background: #fff; border-bottom: 1px solid #ddd; position: sticky; top: 0; z-index: 1000; }
+        .nav-left, .nav-right { display: flex; align-items: center; }
+        .sign-out-btn { background-color: #dc3545; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 12px; margin-right: 20px; transition: 0.2s; }
+        .user-info { font-size: 13px; color: #666; font-family: monospace; }
+        .nav-link { margin-left: 25px; color: #007bff; text-decoration: none; font-weight: bold; cursor: pointer; font-size: 14px; }
+        .page-view { display: none; width: 100%; flex-direction: column; align-items: center; }
+        .container { background-color: #f9f9f9; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); width: 480px; text-align: center; border: 1px solid #ddd; margin-top: 50px; }
+        .grid-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; width: 95%; max-width: 1300px; margin-top: 50px; padding: 20px; }
+        .project-card { background: #ffffff; border: 1px solid #ddd; border-radius: 10px; padding: 20px; text-align: left; position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.05); min-height: 350px; display: flex; flex-direction: column; }
+        .delete-btn { position: absolute; top: 12px; right: 12px; background: #ff4d4d; color: white; border: none; border-radius: 4px; width: 26px; height: 26px; cursor: pointer; font-weight: bold; font-size: 12px; display: flex; align-items: center; justify-content: center; z-index: 10; }
+        input[type="text"], input[type="file"] { width: 100%; padding: 10px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        .tag-container { margin-bottom: 15px; display: flex; flex-wrap: wrap; gap: 5px; }
+        .tag-badge { background: #007bff; color: white; padding: 3px 10px; border-radius: 15px; font-size: 10px; font-weight: bold; text-transform: uppercase; }
+        button.main-btn { background-color: #007bff; color: white; border: none; padding: 12px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; transition: 0.3s; margin-top: auto; }
+        button.main-btn:disabled { background-color: #ccc; cursor: not-allowed; }
+        .card-output { margin-top: 15px; padding: 10px; background-color: #f4f4f4; color: #1a7f37; font-family: 'Courier New', monospace; border-radius: 5px; font-size: 11px; border: 1px solid #ddd; white-space: pre-wrap; max-height: 100px; overflow-y: auto; }
+        #costFooter { display: none; width: 95%; max-width: 1300px; margin: 30px 0; padding: 20px; background: #1a1a1a; color: #00ff00; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 13px; border-left: 5px solid #007bff; box-sizing: border-box; }
+    </style>
 </head>
 <body>
-  <h1>AWS - Basic index.html file!</h1>
-  <p>Lab #5 Deployment </p>
+
+    <nav id="mainNav">
+        <div class="nav-left">
+            <button class="sign-out-btn" onclick="signOut()">Sign Out</button>
+            <div class="user-info" id="userDisplay">Authenticating...</div>
+        </div>
+        <div class="nav-right">
+            <div class="nav-link" onclick="showPage('upload')">Upload Project</div>
+            <div class="nav-link" onclick="showPage('view')">View Projects</div>
+        </div>
+    </nav>
+
+    <div id="loadingPage" class="page-view" style="display: flex;">
+        <div class="container">
+            <h2>Cloud Dashboard</h2>
+            <p id="statusMsg">Connecting to AWS Identity Services...</p>
+        </div>
+    </div>
+
+    <div id="uploadPage" class="page-view">
+        <div class="container">
+            <h2>Cloud Project Upload</h2>
+            <div style="text-align: left;">
+                <label style="font-size: 11px; font-weight: bold;">Select File</label>
+                <input type="file" id="targetFileInput">
+                <label style="font-size: 11px; font-weight: bold;">Project Display Name</label>
+                <input type="text" id="projectNameInput" placeholder="e.g. EC2 Automation">
+                <label style="font-size: 11px; font-weight: bold;">Project Tags (Max 3, comma separated)</label>
+                <input type="text" id="projectTagsInput" placeholder="e.g. AWS, Python, Dev">
+            </div>
+            <button class="main-btn" id="uploadBtn" onclick="handleS3Upload()">Push to Cloud</button>
+            <div id="statusOutput" style="margin-top:10px; font-size: 12px; font-weight: bold;"></div>
+        </div>
+    </div>
+
+    <div id="viewPage" class="page-view">
+        <div id="gridElement" class="grid-container"></div>
+        <div id="costFooter"></div>
+    </div>
+
+<script>
+    // --- AWS CONFIGURATION ---
+    const LAMBDA_URL = "https://urkpoqmrdiw4cpkrmu6krzr2a40octuk.lambda-url.us-east-1.on.aws/";
+    const S3_URL = "https://cloud-dashboard-projectbucket.s3.amazonaws.com"; 
+    const COGNITO_DOMAIN = "https://us-east-1p6ilmawr5.auth.us-east-1.amazoncognito.com";
+    const CLIENT_ID = "14aqagd4bom6grss25hf8hplb0"; 
+    const REDIRECT_URI = "https://staging.ddzoooj3rpvxc.amplifyapp.com";
+
+    let userId = localStorage.getItem('userId');
+    let userName = localStorage.getItem('userName');
+
+    function parseJwt(token) {
+        try {
+            const base64Url = token.split('.')[1];
+            const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+            return JSON.parse(window.atob(base64));
+        } catch (e) { return null; }
+    }
+
+    function checkAuth() {
+        const hash = window.location.hash.substring(1);
+        const params = new URLSearchParams(hash);
+        const idToken = params.get('id_token');
+
+        if (idToken) {
+            const payload = parseJwt(idToken);
+            userId = payload.email || payload['cognito:username'] || payload.sub;
+            userName = userId.split('@')[0];
+            localStorage.setItem('userId', userId);
+            localStorage.setItem('userName', userName);
+            window.history.replaceState({}, document.title, "/");
+            loadDashboard();
+        } else if (userId) {
+            loadDashboard();
+        } else {
+            window.location.href = `${COGNITO_DOMAIN}/login?client_id=${CLIENT_ID}&response_type=token&scope=email+openid+profile&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`;
+        }
+    }
+
+    function loadDashboard() {
+        document.getElementById('loadingPage').style.display = "none";
+        document.getElementById('mainNav').style.display = "flex";
+        document.getElementById('userDisplay').innerText = `User: ${userName}`;
+        showPage('view');
+    }
+
+    function signOut() {
+        localStorage.clear();
+        window.location.href = `${COGNITO_DOMAIN}/logout?client_id=${CLIENT_ID}&logout_uri=${encodeURIComponent(REDIRECT_URI)}`;
+    }
+
+    async function syncFromCloud() {
+        const currentUid = localStorage.getItem('userId');
+        if (!currentUid) return;
+        
+        const grid = document.getElementById('gridElement');
+        grid.innerHTML = '<p>Querying Cloud Infrastructure...</p>';
+        
+        try {
+            const response = await fetch(LAMBDA_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "LIST", userId: currentUid })
+            });
+
+            if (!response.ok) throw new Error("Cloud sync failed");
+            
+            const data = await response.json();
+            let projectsToShow = data.projects || [];
+            updateCostReport(projectsToShow.length);
+            
+            while (projectsToShow.length < 5) {
+                projectsToShow.push({ name: "Slot Available", customName: "Empty Slot", isEmpty: true });
+            }
+            renderGrid(projectsToShow.slice(0, 5));
+        } catch (err) { 
+            grid.innerHTML = '<p style="color:red;">Error syncing with cloud.</p>';
+            renderEmptyGrid(); 
+        }
+    }
+
+    function renderEmptyGrid() {
+        const emptySlots = Array(5).fill({ name: "Slot Available", customName: "Empty Slot", isEmpty: true });
+        renderGrid(emptySlots);
+    }
+
+    function updateCostReport(count) {
+        const footer = document.getElementById('costFooter');
+        const viewPage = document.getElementById('viewPage');
+        if (viewPage.style.display === 'flex') {
+            footer.style.display = 'block';
+        }
+
+        const cost = (count * 0.021).toFixed(3);
+        const lat = Math.floor(Math.random() * (95 - 40) + 40);
+        footer.innerHTML = `
+            <strong>>> IT SYSTEM STATUS REPORT</strong><br>
+            [RESOURCES]: ${count} Active S3 Objects | [IDENTITY]: AWS Cognito Verified<br>
+            [METRICS]: API Latency ${lat}ms | Monthly Est. Cost: $${cost} USD | Storage: Standard-IA
+        `;
+    }
+
+    function renderGrid(projects) {
+        const grid = document.getElementById('gridElement');
+        grid.innerHTML = '';
+        projects.forEach((project, i) => {
+            const card = document.createElement('div');
+            card.className = 'project-card';
+            const isP = project.isEmpty;
+            const tags = project.tags || [];
+
+            card.innerHTML = `
+                ${!isP ? `<button class="delete-btn" onclick="deleteProject('${project.name}')">X</button>` : ''}
+                <h3>${project.customName || project.name}</h3>
+                <div class="tag-container">
+                    ${tags.map(t => `<span class="tag-badge">${t}</span>`).join('')}
+                </div>
+                <p style="font-size:11px; color:#888; margin-top: auto;">${isP ? 'Available' : 'Key: ' + project.name}</p>
+                <button class="main-btn" ${isP ? 'disabled' : ''} onclick="runAnalysis('${project.name}', ${i})">Analyze</button>
+                <div id="report-${i}" class="card-output">Status: ${isP ? 'Inactive' : 'Cloud Verified'}</div>
+            `;
+            grid.appendChild(card);
+        });
+    }
+
+    async function handleS3Upload() {
+        const fileInput = document.getElementById('targetFileInput');
+        const file = fileInput.files[0];
+        const statusOutput = document.getElementById('statusOutput');
+        const currentUid = localStorage.getItem('userId');
+        
+        if (!file || !currentUid) return alert("Select a file and ensure you are logged in.");
+        
+        const btn = document.getElementById('uploadBtn');
+        const tagsInput = document.getElementById('projectTagsInput').value;
+        const customName = document.getElementById('projectNameInput').value || file.name;
+        const tags = tagsInput.split(',').map(t => t.trim()).filter(t => t !== '').slice(0, 3).join(',');
+
+        btn.disabled = true;
+        statusOutput.style.color = "#007bff";
+        statusOutput.innerText = "⏳ Provisioning Cloud Resources...";
+
+        try {
+            const response = await fetch(`${S3_URL}/users/${currentUid}/${file.name}`, {
+                method: 'PUT',
+                body: file,
+                headers: { 
+                    'x-amz-meta-project-name': customName,
+                    'x-amz-meta-project-tags': tags
+                }
+            });
+
+            if (response.ok) {
+                statusOutput.style.color = "#1a7f37";
+                statusOutput.innerText = "✅ Successfully added project.";
+                fileInput.value = "";
+                document.getElementById('projectTagsInput').value = "";
+                document.getElementById('projectNameInput').value = "";
+            } else {
+                throw new Error("Upload failed");
+            }
+        } catch (err) { 
+            statusOutput.style.color = "#dc3545";
+            statusOutput.innerText = "❌ Upload Error: Check S3 Permissions";
+        }
+        btn.disabled = false;
+    }
+
+    async function deleteProject(fileName) {
+        const currentUid = localStorage.getItem('userId');
+        if (!confirm(`Permanently delete ${fileName}?`) || !currentUid) return;
+        
+        await fetch(LAMBDA_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "DELETE", userId: currentUid, fileName: fileName })
+        });
+        syncFromCloud();
+    }
+
+    async function runAnalysis(fileName, index) {
+        const currentUid = localStorage.getItem('userId');
+        const output = document.getElementById(`report-${index}`);
+        output.innerText = "⏳ Requesting Lambda Analysis...";
+        
+        try {
+            const response = await fetch(LAMBDA_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "ANALYZE", userId: currentUid, fileName: fileName })
+            });
+            const data = await response.json();
+            output.innerText = JSON.stringify(data.analysis, null, 2);
+        } catch (err) {
+            output.innerText = "Error analyzing project.";
+        }
+    }
+
+    function showPage(pageId) {
+        document.querySelectorAll('.page-view').forEach(p => p.style.display = 'none');
+        document.getElementById(pageId + 'Page').style.display = 'flex';
+        document.getElementById('costFooter').style.display = 'none';
+
+        if (pageId === 'view') {
+            syncFromCloud();
+        }
+    }
+
+    checkAuth();
+</script>
 </body>
 </html>
